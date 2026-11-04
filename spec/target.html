@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Semantic font renderer: target</title>
+<!--
+SEMANTIC FONT MAPPING (each word is one span; scores are inline custom properties v, s, u, c)
+
+Tokenization: split the text on runs of Unicode White_Space characters: U+0009-000D, U+0020, U+0085, U+00A0, U+1680,
+U+2000-200A, U+2028, U+2029, U+202F, U+205F, U+3000. U+FEFF and U+001C-001F are NOT whitespace. Empty tokens are dropped. Each token is one span (displayed text keeps its original case and
+punctuation); spans are separated by a real space. Lookup of v (VADER lexicon) and c (hedge table):
+  (a) lowercase the raw token (Python str.lower() semantics, Unicode default case mapping) and look it up in the lexicon
+      as-is (so emoticons such as ':)' or '<3' work). Lexicon keys are matched exactly as written in the file, case kept,
+      as make_lex_dict does; only the looked-up token is lowercased. So the 14 keys containing uppercase (e.g. ':P', ':D')
+      can never match, and ':p' (1.0) is a different key from ':P' (1.4). Keys containing spaces (e.g. "can't stand",
+      'fed up') can never match, since tokens contain no whitespace;
+  (b) if absent, repeatedly strip leading and trailing characters of Unicode general category P* (all punctuation,
+      including curly quotes, dashes, hyphens and ASCII punctuation; symbols S* are NOT stripped) until none is left,
+      lowercase, and look that up. Interior characters (e.g. the apostrophe in "don't") are untouched.
+      ('Perhaps' -> 'perhaps', 'terribly.' -> 'terribly')
+  (c) a token that is not found raw and strips to empty gets v = 0, c = 1.
+The hedge table is looked up with the stripped lowercase form.
+
+Lexicon source: vaderSentiment/vader_lexicon.txt from github.com/cjhutto/vaderSentiment, commit 44fc044
+(44fc044cd877310ee8278a0eadf34bcd50d41d06). The file repeats some keys with different scores (:-p, d:, d=, fav, lmao, lol,
+muah, o.o, ok, sob, x-d, x-p, xd, xp). When a key repeats, the LAST entry in the file wins, as in vaderSentiment's own
+loader (make_lex_dict assigns lex_dict[word] = float(measure) line by line).
+
+Inputs per word i (0-based, in reading order):
+  v  valence  [-1, 1]  = VADER lexicon score / 4 (VADER range is -4..4); 0 if the word is not in the lexicon.
+  s  salience [0, 1]   = |v|. A word with no VADER entry has v = 0, so s = 0.
+  u  surprise [0, 1]   = min(1, |v_i - mean(v_0..v_(i-1))|); u = 0 for i = 0. The mean includes neutral words (v = 0).
+  c  certainty [0, 1]  = value from the closed hedge table below; any word not in the table has c = 1.
+                         0 = fully hedged, 1 = fully confident.
+                         Hedge table (exactly these rows): perhaps 0.2 | might 0.3 | maybe 0.3 | possibly 0.3 | could 0.4
+
+Outputs (CSS, computed from the custom properties; the stylesheet below is the exact formula):
+  valence   -> color, diverging. v > 0 mixes neutral toward blue by v; v < 0 mixes neutral toward orange by -v.
+               Light: neutral #333333, blue #084a94, orange #8f3700. Dark: neutral #e0e0e0, blue #7ab8ff, orange #ffa05c.
+               Mix is color-mix in srgb: pct = |v| * 100%. Blue = positive, orange = negative.
+               v = 0 is the neutral text color of the active scheme: dark gray #333333 in light mode, light gray #e0e0e0 in dark mode.
+               Requires color-mix() and :where() support.
+  sign of v -> text-decoration (non-color cue, so sign never depends on color alone; WCAG 1.4.1). data-sign = sign(v) is
+               set on the span: pos | neg | zero.
+               v > 0: underline solid. v < 0: underline wavy. v = 0: none. Decoration color is currentColor.
+               text-decoration-thickness = 0.05em + 0.07em * s   (0.05..0.12em, higher s = thicker)
+               text-underline-offset     = 0.1em + 0.1em * s     (0.1..0.2em, higher s = farther)
+  salience  -> font-weight = 400 + 400 * s   (400..800, higher s = bolder)
+               font-size   = 1em + 0.4em * s (1em..1.4em, higher s = larger)
+  surprise  -> letter-spacing = 0.15em * u   (0..0.15em, never negative, higher u = wider)
+  certainty -> font-style: oblique (14deg * (1 - c))   (0..14deg, lower c = more slanted; c = 1 is upright)
+               opacity = 0.8 + 0.2 * c                 (0.8..1, lower c = fainter)
+  Minimum opacity is 0.8. At that opacity every color on the whole valence range keeps contrast >= 4.5:1
+  against the page background (light #ffffff, dark #121212); worst case over v in [-1,1]: light 4.89:1, dark 6.13:1.
+  The underline uses currentColor, so its contrast is the same as the text.
+  Intensity is also carried by weight, size, spacing and slant, never by color alone.
+
+Table outputs are displayed rounded half-up to 3 decimals (e.g. u(might) = 0.16875 -> 0.169, letter-spacing 0.10125em ->
+0.101em); computation is unrounded and the inline custom properties give inputs to 7 decimals (u(terribly) = 0.6583333).
+Computing from these inline inputs matches the table at its 3-decimal rounding.
+A renderer is compared by relative order, not exact values.
+Word            v       s       u       c     weight  size     letter-spacing  slant   opacity
+Perhaps         0       0       0       0.2   400     1em      0               11.2deg 0.84
+the             0       0       0       1     400     1em      0               0       1
+wonderful       0.675   0.675   0.675   1     670     1.27em   0.101em         0       1
+plan            0       0       0.225   1     400     1em      0.034em         0       1
+might           0       0       0.169   0.3   400     1em      0.025em         9.8deg  0.86
+fail           -0.625   0.625   0.76    1     650     1.25em   0.114em         0       1
+terribly       -0.65    0.65    0.658   1     660     1.26em   0.099em         0       1
+Underline (shape; thickness / offset): wonderful solid 0.097em / 0.168em; fail wavy 0.094em / 0.163em;
+terribly. wavy 0.096em / 0.165em; all other words none.
+VADER raw: wonderful 2.7, fail -2.5, terribly -2.6. Perhaps/might are hedges (not valenced); plan/the are neutral.
+-->
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --neu: #333333;
+  --pos: #084a94;
+  --neg: #8f3700;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121212;
+    --neu: #e0e0e0;
+    --pos: #7ab8ff;
+    --neg: #ffa05c;
+  }
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--neu);
+  font-family: system-ui, sans-serif;
+}
+main {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 3rem 1rem;
+}
+p {
+  margin: 0;
+  font-size: 1.75rem;
+  line-height: 1.6;
+}
+p span:where([data-sign="pos"], [data-sign="neg"]) { text-decoration-line: underline; }
+p span[data-sign="pos"] { text-decoration-style: solid; }
+p span[data-sign="neg"] { text-decoration-style: wavy; }
+p span {
+  text-decoration-color: currentColor;
+  text-decoration-thickness: calc(0.05em + 0.07em * var(--s));
+  text-underline-offset: calc(0.1em + 0.1em * var(--s));
+  color: color-mix(in srgb, var(--neg) calc(max(0, -1 * var(--v)) * 100%), color-mix(in srgb, var(--pos) calc(max(0, var(--v)) * 100%), var(--neu)));
+  font-weight: calc(400 + 400 * var(--s));
+  font-size: calc(1em + 0.4em * var(--s));
+  letter-spacing: calc(0.15em * var(--u));
+  font-style: oblique calc(14deg * (1 - var(--c)));
+  opacity: calc(0.8 + 0.2 * var(--c));
+}
+</style>
+</head>
+<body>
+<main>
+<p><span data-sign="zero" style="--v:0;--s:0;--u:0;--c:0.2">Perhaps</span> <span data-sign="zero" style="--v:0;--s:0;--u:0;--c:1">the</span> <span data-sign="pos" style="--v:0.675;--s:0.675;--u:0.675;--c:1">wonderful</span> <span data-sign="zero" style="--v:0;--s:0;--u:0.225;--c:1">plan</span> <span data-sign="zero" style="--v:0;--s:0;--u:0.16875;--c:0.3">might</span> <span data-sign="neg" style="--v:-0.625;--s:0.625;--u:0.76;--c:1">fail</span> <span data-sign="neg" style="--v:-0.65;--s:0.65;--u:0.6583333;--c:1">terribly.</span></p>
+</main>
+</body>
+</html>
