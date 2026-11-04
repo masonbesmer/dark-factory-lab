@@ -50,7 +50,7 @@ Price rank, highest first: Opus 5.5 > Sonnet 5.5 > Haiku 5.5.
 ## Flow
 
 1. `git fetch origin main`
-2. `wt switch --create <branch> --base origin/main --no-cd --no-hooks -y --format json`. The worktree path is the `.path` field. Every PR branch starts from freshly fetched `main`.
+2. `wt switch --create <branch> --base origin/main --path "$(git rev-parse --path-format=absolute --git-common-dir)/../.worktrees/<branch>" --no-cd --no-hooks -y --format json`. The worktree path is the `.path` field. Every PR branch starts from freshly fetched `main`.
 3. The Executor works in that worktree (follow the Go test rules below).
 4. Run `task gate` in the worktree. It must pass locally before any PR.
 5. Start a new Auditor: ACCEPT or REJECT.
